@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,10 +78,35 @@ func (s *HistoryStorage) Close() error {
 	return nil
 }
 
+// URLTest measures end-to-end latency through detour (dial + HTTP).
+// Retries only on failure (up to 3 attempts). First success returns immediately.
 func URLTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err error) {
 	if link == "" {
 		link = "https://www.gstatic.com/generate_204"
 	}
+
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if ctx.Err() != nil {
+			break
+		}
+		sample, sampleErr := urlTestOnce(ctx, link, detour)
+		if sampleErr == nil {
+			return sample, nil
+		}
+		lastErr = sampleErr
+	}
+	if lastErr != nil {
+		return 0, lastErr
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, context.DeadlineExceeded
+}
+
+func urlTestOnce(ctx context.Context, link string, detour N.Dialer) (t uint16, err error) {
 	linkURL, err := url.Parse(link)
 	if err != nil {
 		return
@@ -102,10 +128,16 @@ func URLTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 		return
 	}
 	defer instance.Close()
-	if N.NeedHandshakeForWrite(instance) {
-		start = time.Now()
+	// Always measure from a ready connection: dial/SOCKS/handshake cost is
+	// warm-up path noise; reported latency is HTTP RTT through the tunnel.
+	start = time.Now()
+
+	method := http.MethodHead
+	// generate_204 endpoints are designed for GET; some CDNs mishandle or slow-path HEAD.
+	if strings.Contains(linkURL.Path, "generate_204") {
+		method = http.MethodGet
 	}
-	req, err := http.NewRequest(http.MethodHead, link, nil)
+	req, err := http.NewRequest(method, link, nil)
 	if err != nil {
 		return
 	}
