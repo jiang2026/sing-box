@@ -43,6 +43,10 @@ func NewDefaultFactory(
 		platformFormatter: Formatter{
 			BaseTime:         formatter.BaseTime,
 			DisableLineBreak: true,
+			// Platform（如 Android neko.log）需要可读的本机墙钟时间，
+			// 不要用相对秒 INFO[0000]（看起来像「0点」）。
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
 		},
 		writer:         writer,
 		filePath:       filePath,
