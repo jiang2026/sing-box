@@ -71,7 +71,11 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 	if err != nil {
 		return nil, err
 	}
-	return dns.FixedResponse(message.Id, question, []netip.Addr{address}, C.DefaultDNSTTL), nil
+	// Short TTL so clients re-query soon after FakeIP store is rebuilt
+	// (e.g. VPN reload). DefaultDNSTTL (600s) leaves browsers stuck on
+	// stale 198.18.x.x until the process is restarted.
+	const fakeIPTTL uint32 = 30
+	return dns.FixedResponse(message.Id, question, []netip.Addr{address}, fakeIPTTL), nil
 }
 
 func (t *Transport) Store() adapter.FakeIPStore {

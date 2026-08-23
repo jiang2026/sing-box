@@ -179,3 +179,5 @@ require (
 )
 
 replace github.com/sagernet/wireguard-go => ../wireguard-go
+
+replace github.com/sagernet/sing => ./_patches/sing

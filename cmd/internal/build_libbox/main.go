@@ -104,9 +104,12 @@ func checkJavaVersion() {
 	if err != nil {
 		log.Fatal(E.Cause(err, "check java version"))
 	}
-	if !strings.Contains(javaVersion, "openjdk 17") {
-		log.Fatal("java version should be openjdk 17")
+	// Accept OpenJDK 17+ (gomobile bind works with newer JDKs; 17 was historical CI pin)
+	lower := strings.ToLower(javaVersion)
+	if !strings.Contains(lower, "openjdk") && !strings.Contains(lower, "java") {
+		log.Fatal("java runtime not found, got: ", javaVersion)
 	}
+	log.Info("using java: ", strings.Split(javaVersion, "\n")[0])
 }
 
 func getAndroidBindTarget() string {
@@ -146,14 +149,19 @@ func buildAndroidVariant(config AndroidBuildConfig, bindTarget string) {
 		log.Fatal(err)
 	}
 
-	copyPath := filepath.Join("..", "sing-box-for-android", "app", "libs")
-	if rw.IsDir(copyPath) {
-		copyPath, _ = filepath.Abs(copyPath)
-		err = rw.CopyFile(config.OutputName, filepath.Join(copyPath, config.OutputName))
+	for _, copyPath := range []string{
+		filepath.Join("..", "sing-box-for-android", "app", "libs"),
+		filepath.Join("..", "android_client", "vendor-aars"),
+	} {
+		if !rw.IsDir(copyPath) {
+			continue
+		}
+		absPath, _ := filepath.Abs(copyPath)
+		err = rw.CopyFile(config.OutputName, filepath.Join(absPath, config.OutputName))
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Info("copied ", config.OutputName, " to ", copyPath)
+		log.Info("copied ", config.OutputName, " to ", absPath)
 	}
 }
 
