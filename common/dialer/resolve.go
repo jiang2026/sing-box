@@ -141,9 +141,20 @@ func (d *resolveDialer) Upstream() any {
 	return d.dialer
 }
 
+func (d *resolveDialer) UDPListenerControl() (control.Func, bool) {
+	if listener, ok := d.dialer.(UDPListener); ok {
+		return listener.UDPListenerControl()
+	}
+	return nil, false
+}
+
 func (d *resolveDialer) WireGuardControl() control.Func {
 	if wg, ok := d.dialer.(WireGuardListener); ok {
 		return wg.WireGuardControl()
+	}
+	if listener, ok := d.dialer.(UDPListener); ok {
+		controlFunc, _ := listener.UDPListenerControl()
+		return controlFunc
 	}
 	return nil
 }

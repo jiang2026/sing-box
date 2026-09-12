@@ -28,7 +28,6 @@ import (
 var (
 	_ ParallelInterfaceDialer   = (*DefaultDialer)(nil)
 	_ UDPListener               = (*DefaultDialer)(nil)
-	_ WireGuardListener         = (*DefaultDialer)(nil)
 	_ WireGuardListenerWithBind = (*DefaultDialer)(nil)
 )
 
