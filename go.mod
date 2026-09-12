@@ -200,4 +200,3 @@ require (
 )
 
 replace github.com/sagernet/wireguard-go => ../wireguard-go
-
