@@ -1,6 +1,7 @@
 package libbox
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/libbox/internal/procfs"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/service/powerreport"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/control"
@@ -28,6 +30,7 @@ type platformInterfaceWrapper struct {
 	iif                    PlatformInterface
 	useProcFS              bool
 	networkManager         adapter.NetworkManager
+	powerManager           *powerreport.Manager
 	myTunName              string
 	myTunAddress           []netip.Addr
 	defaultInterfaceAccess sync.Mutex
@@ -84,6 +87,10 @@ func (w *platformInterfaceWrapper) OpenInterface(options *tun.Options, platformO
 	return tun.New(*options)
 }
 
+func (w *platformInterfaceWrapper) ProcessPlatformOptions(options option.TunPlatformOptions) error {
+	return nil
+}
+
 func myTunAddress(options *tun.Options) []netip.Addr {
 	addresses := make([]netip.Addr, 0, len(options.Inet4Address)+len(options.Inet6Address))
 	for _, prefix := range options.Inet4Address {
@@ -135,8 +142,12 @@ func (w *platformInterfaceWrapper) NetworkInterfaces() ([]adapter.NetworkInterfa
 				Addresses: common.Map(iteratorToArray[string](netInterface.Addresses), netip.MustParsePrefix),
 				Flags:     linkFlags(uint32(netInterface.Flags)),
 			},
-			Type:        C.InterfaceType(netInterface.Type),
-			DNSServers:  iteratorToArray[string](netInterface.DNSServer),
+			Type:       C.InterfaceType(netInterface.Type),
+			DNSServers: iteratorToArray[string](netInterface.DNSServer),
+			Gateways: common.Filter(common.Map(iteratorToArray[string](netInterface.Gateway), func(it string) netip.Addr {
+				gateway, _ := netip.ParseAddr(it)
+				return gateway.Unmap().WithZone("")
+			}), netip.Addr.IsValid),
 			Expensive:   netInterface.Metered || isDefault && w.isExpensive,
 			Constrained: isDefault && w.isConstrained,
 		})
@@ -167,12 +178,12 @@ func (w *platformInterfaceWrapper) UsePlatformWIFIMonitor() bool {
 	return true
 }
 
-func (w *platformInterfaceWrapper) ReadWIFIState() adapter.WIFIState {
+func (w *platformInterfaceWrapper) ReadWIFIState(ctx context.Context) adapter.WIFIState {
 	wifiState := w.iif.ReadWIFIState()
 	if wifiState == nil {
 		return adapter.WIFIState{}
 	}
-	return (adapter.WIFIState)(*wifiState)
+	return adapter.WIFIState(*wifiState)
 }
 
 func (w *platformInterfaceWrapper) UsePlatformConnectionOwnerFinder() bool {
@@ -231,6 +242,10 @@ func (w *platformInterfaceWrapper) SendNotification(notification *adapter.Notifi
 	return w.iif.SendNotification((*Notification)(notification))
 }
 
+func (w *platformInterfaceWrapper) CancelNotification(identifier string, typeID int32) error {
+	return w.iif.CancelNotification(identifier, typeID)
+}
+
 func (w *platformInterfaceWrapper) UsePlatformNeighborResolver() bool {
 	return true
 }
@@ -283,6 +298,55 @@ func (w *platformInterfaceWrapper) ReadSystemSSHHostKey() ([]byte, error) {
 
 func (w *platformInterfaceWrapper) TailscaleHostname() string {
 	return w.iif.TailscaleHostname()
+}
+
+func (w *platformInterfaceWrapper) UsePlatformBridge() bool {
+	return w.iif.UsePlatformBridge()
+}
+
+func (w *platformInterfaceWrapper) CreateBridge(options adapter.BridgeOptions) (adapter.BridgeSession, error) {
+	bridgeOptions := &BridgeOptions{
+		BridgeName: options.BridgeName,
+		MTU:        int32(options.MTU),
+		Interface:  options.Interface,
+		RuleIndex:  int32(options.RuleIndex),
+		RouteTable: int32(options.RouteTable),
+	}
+	if options.Inet4Port.IsValid() {
+		bridgeOptions.Inet4Port = options.Inet4Port.String()
+	}
+	if options.Inet6Port.IsValid() {
+		bridgeOptions.Inet6Port = options.Inet6Port.String()
+	}
+	session, err := w.iif.CreateBridge(bridgeOptions)
+	if err != nil {
+		return nil, err
+	}
+	return &bridgeSessionWrapper{session}, nil
+}
+
+type bridgeSessionWrapper struct {
+	session BridgeSession
+}
+
+func (w *bridgeSessionWrapper) FileDescriptor() int {
+	return int(w.session.FileDescriptor())
+}
+
+func (w *bridgeSessionWrapper) Name() string {
+	return w.session.Name()
+}
+
+func (w *bridgeSessionWrapper) Inet6Active() bool {
+	return w.session.Inet6Active()
+}
+
+func (w *bridgeSessionWrapper) SetEgress(interfaceName string) error {
+	return w.session.SetEgress(interfaceName)
+}
+
+func (w *bridgeSessionWrapper) Close() error {
+	return w.session.Close()
 }
 
 func (w *platformInterfaceWrapper) LookupUser(username string) (*adapter.PlatformUser, error) {

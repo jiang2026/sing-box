@@ -111,7 +111,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 				}
 				return dnsRouter.Lookup(ctx, host, dnsOptions)
 			},
-			Logger: logger,
+			Logger:    logger,
+			IPVersion: options.Realm.IPVersion,
+		}
+		if options.Realm.PortMapping != nil && options.Realm.PortMapping.Enabled {
+			realmOptions.PortMapping = &realm.PortMappingOptions{
+				Timeout:  time.Duration(options.Realm.PortMapping.Timeout),
+				Lifetime: time.Duration(options.Realm.PortMapping.Lifetime),
+			}
 		}
 	}
 	networkList := options.Network.Build()
@@ -143,6 +150,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		},
 		UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
 		BBRProfile:   options.BBRProfile,
+		ChromeParrot: !options.DisableChromeParrot,
 		RealmOptions: realmOptions,
 	})
 	if err != nil {
@@ -195,7 +203,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return h.client.ListenPacket(ctx)
 }
 
-func (h *Outbound) InterfaceUpdated() {
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	h.client.CloseWithError(E.New("network changed"))
 }
 

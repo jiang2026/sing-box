@@ -78,6 +78,10 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 	return dns.FixedResponse(message.Id, question, []netip.Addr{address}, fakeIPTTL), nil
 }
 
+func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	callback(t.Exchange(ctx, message))
+}
+
 func (t *Transport) Store() adapter.FakeIPStore {
 	return t.store
 }

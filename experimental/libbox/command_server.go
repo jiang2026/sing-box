@@ -14,6 +14,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/service/oomkiller"
+	"github.com/sagernet/sing-box/service/powerreport"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
@@ -28,10 +30,12 @@ import (
 
 type CommandServer struct {
 	*daemon.StartedService
+	ctx               context.Context
 	managedService    *daemon.ManagedService
 	handler           CommandServerHandler
 	platformInterface PlatformInterface
 	platformWrapper   *platformInterfaceWrapper
+	powerManager      *powerreport.Manager
 	grpcServer        *grpc.Server
 	listener          net.Listener
 	endPauseTimer     *time.Timer
@@ -49,15 +53,20 @@ type CommandServerHandler interface {
 
 func NewCommandServer(handler CommandServerHandler, platformInterface PlatformInterface) (*CommandServer, error) {
 	ctx := baseContext(platformInterface)
+	powerManager := powerreport.NewManager()
+	service.MustRegister[*powerreport.Manager](ctx, powerManager)
 	platformWrapper := &platformInterfaceWrapper{
-		iif:       platformInterface,
-		useProcFS: platformInterface.UseProcFS(),
+		iif:          platformInterface,
+		useProcFS:    platformInterface.UseProcFS(),
+		powerManager: powerManager,
 	}
 	service.MustRegister[adapter.PlatformInterface](ctx, platformWrapper)
 	server := &CommandServer{
+		ctx:               ctx,
 		handler:           handler,
 		platformInterface: platformInterface,
 		platformWrapper:   platformWrapper,
+		powerManager:      powerManager,
 	}
 	server.StartedService = daemon.NewStartedService(daemon.ServiceOptions{
 		Context: ctx,
@@ -74,11 +83,19 @@ func NewCommandServer(handler CommandServerHandler, platformInterface PlatformIn
 		// GroupID:          sGroupID,
 		// SystemProxyEnabled: false,
 	})
+	reporter := &oomReporter{startedService: server.StartedService}
+	service.MustRegister[oomkiller.OOMReporter](ctx, reporter)
 	server.managedService = daemon.NewManagedService(daemon.ManagedServiceOptions{
 		Handler:     (*platformHandler)(server),
 		Debug:       sDebug,
-		OOMReporter: sOOMReporter,
+		OOMReporter: reporter,
 	})
+	if sPowerReportEnabled {
+		err := powerManager.Start(PowerReportOptions(server.StartedService))
+		if err != nil {
+			log.StdLogger().Error(E.Cause(err, "start power report recorder"))
+		}
+	}
 	return server, nil
 }
 
@@ -158,8 +175,8 @@ func (s *CommandServer) Start() error {
 	}
 	s.listener = listener
 	serverOptions := []grpc.ServerOption{
-		grpc.UnaryInterceptor(unaryAuthInterceptor),
-		grpc.StreamInterceptor(streamAuthInterceptor),
+		grpc.ChainUnaryInterceptor(unaryAuthInterceptor, daemon.UnaryLocaleInterceptor),
+		grpc.ChainStreamInterceptor(streamAuthInterceptor, daemon.StreamLocaleInterceptor),
 	}
 	s.grpcServer = grpc.NewServer(serverOptions...)
 	daemon.RegisterStartedServiceServer(s.grpcServer, s.StartedService)
@@ -178,6 +195,7 @@ func (s *CommandServer) Close() {
 	}
 	common.Close(s.listener)
 	s.StartedService.Close()
+	s.powerManager.Close()
 }
 
 type OverrideOptions struct {
@@ -188,7 +206,10 @@ type OverrideOptions struct {
 
 func (s *CommandServer) StartOrReloadService(configContent string, options *OverrideOptions) error {
 	saveConfigSnapshot(configContent)
-	err := s.StartedService.StartOrReloadService(configContent, &daemon.OverrideOptions{
+	if s.powerManager.Recorder() != nil {
+		copyConfigSnapshot(filepath.Join(sWorkingPath, powerreport.DraftDirectoryName))
+	}
+	err := s.StartedService.StartOrReloadService(s.ctx, configContent, &daemon.OverrideOptions{
 		AutoRedirect:   options.AutoRedirect,
 		IncludePackage: iteratorToArray(options.IncludePackage),
 		ExcludePackage: iteratorToArray(options.ExcludePackage),
@@ -228,6 +249,10 @@ func (s *CommandServer) NeedFindProcess() bool {
 }
 
 func (s *CommandServer) Pause() {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordPlatformEvent("ne-sleep")
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.PauseManager() == nil {
 		return
@@ -243,6 +268,10 @@ func (s *CommandServer) Pause() {
 }
 
 func (s *CommandServer) Wake() {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordPlatformEvent("ne-wake")
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.PauseManager() == nil {
 		return
@@ -257,7 +286,7 @@ func (s *CommandServer) ResetNetwork() {
 	if instance == nil || instance.Box() == nil {
 		return
 	}
-	instance.Box().Network().ResetNetwork()
+	instance.Box().Network().ResetNetwork(context.Background())
 }
 
 func (s *CommandServer) UpdateWIFIState() {
@@ -265,7 +294,7 @@ func (s *CommandServer) UpdateWIFIState() {
 	if instance == nil || instance.Box() == nil {
 		return
 	}
-	instance.Box().Network().UpdateWIFIState()
+	instance.Box().Network().UpdateWIFIState(context.Background())
 }
 
 type platformHandler CommandServer
@@ -274,7 +303,7 @@ func (h *platformHandler) ServiceStop() error {
 	return (*CommandServer)(h).handler.ServiceStop()
 }
 
-func (h *platformHandler) ServiceReload() error {
+func (h *platformHandler) ServiceReload(ctx context.Context) error {
 	return (*CommandServer)(h).handler.ServiceReload()
 }
 

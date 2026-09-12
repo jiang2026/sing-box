@@ -3,7 +3,6 @@ package group
 import (
 	"context"
 	"net"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
@@ -12,7 +11,6 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -182,17 +180,18 @@ func (s *Selector) NewPacketConnection(ctx context.Context, conn N.PacketConn, m
 	}
 }
 
-func (s *Selector) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	selected := s.selected.Load()
-	if !common.Contains(selected.Network(), metadata.Network) {
-		return nil, E.New(metadata.Network, " is not supported by outbound: ", selected.Tag())
+func RealTag(outboundManager adapter.OutboundManager, detour adapter.Outbound) string {
+	tag := detour.Tag()
+	for {
+		group, isGroup := detour.(adapter.OutboundGroup)
+		if !isGroup {
+			return tag
+		}
+		tag = group.Now()
+		var loaded bool
+		detour, loaded = outboundManager.Outbound(tag)
+		if !loaded {
+			return tag
+		}
 	}
-	return selected.(adapter.DirectRouteOutbound).NewDirectRouteConnection(metadata, routeContext, timeout)
-}
-
-func RealTag(detour adapter.Outbound) string {
-	if group, isGroup := detour.(adapter.OutboundGroup); isGroup {
-		return group.Now()
-	}
-	return detour.Tag()
 }

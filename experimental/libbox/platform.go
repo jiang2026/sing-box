@@ -17,6 +17,7 @@ type PlatformInterface interface {
 	ReadWIFIState() *WIFIState
 	ClearDNSCache()
 	SendNotification(notification *Notification) error
+	CancelNotification(identifier string, typeID int32) error
 	StartNeighborMonitor(listener NeighborUpdateListener) error
 	CloseNeighborMonitor(listener NeighborUpdateListener) error
 	RegisterMyInterface(name string)
@@ -27,6 +28,26 @@ type PlatformInterface interface {
 	LookupSFTPServer() (string, error)
 	ReadSystemSSHHostKey() (string, error)
 	TailscaleHostname() string
+	UsePlatformBridge() bool
+	CreateBridge(options *BridgeOptions) (BridgeSession, error)
+}
+
+type BridgeOptions struct {
+	BridgeName string
+	MTU        int32
+	Inet4Port  string
+	Inet6Port  string
+	Interface  string
+	RuleIndex  int32
+	RouteTable int32
+}
+
+type BridgeSession interface {
+	FileDescriptor() int32
+	Name() string
+	Inet6Active() bool
+	SetEgress(interfaceName string) error
+	Close() error
 }
 
 type PlatformUser struct {
@@ -86,6 +107,7 @@ type NetworkInterface struct {
 
 	Type      int32
 	DNSServer StringIterator
+	Gateway   StringIterator
 	Metered   bool
 }
 

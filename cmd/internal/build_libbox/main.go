@@ -60,10 +60,10 @@ func init() {
 	if err != nil {
 		currentTag = "unknown"
 	}
-	sharedFlags = append(sharedFlags, "-ldflags", "-X github.com/sagernet/sing-box/constant.Version="+currentTag+" -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid=  -checklinkname=0")
-	debugFlags = append(debugFlags, "-ldflags", "-X github.com/sagernet/sing-box/constant.Version="+currentTag+" -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0")
+	sharedFlags = append(sharedFlags, "-ldflags", build_shared.LinkerFlags(currentTag, false))
+	debugFlags = append(debugFlags, "-ldflags", build_shared.LinkerFlags(currentTag, true))
 
-	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "with_clash_api", "with_usbip", "badlinkname", "tfogo_checklinkname0")
+	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "with_clash_api", "with_usbip", "with_openvpn", "with_openconnect", "badlinkname", "tfogo_checklinkname0")
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	sharedTags = append(sharedTags, "with_tailscale", "ts_omit_logtail", "ts_omit_ssh", "ts_omit_drive", "ts_omit_taildrop", "ts_omit_webclient", "ts_omit_doctor", "ts_omit_capture", "ts_omit_kube", "ts_omit_aws", "ts_omit_synology", "ts_omit_bird")
@@ -104,12 +104,9 @@ func checkJavaVersion() {
 	if err != nil {
 		log.Fatal(E.Cause(err, "check java version"))
 	}
-	// Accept OpenJDK 17+ (gomobile bind works with newer JDKs; 17 was historical CI pin)
-	lower := strings.ToLower(javaVersion)
-	if !strings.Contains(lower, "openjdk") && !strings.Contains(lower, "java") {
-		log.Fatal("java runtime not found, got: ", javaVersion)
+	if !strings.Contains(javaVersion, "openjdk 17") {
+		log.Fatal("java version should be openjdk 17")
 	}
-	log.Info("using java: ", strings.Split(javaVersion, "\n")[0])
 }
 
 func getAndroidBindTarget() string {
@@ -149,19 +146,14 @@ func buildAndroidVariant(config AndroidBuildConfig, bindTarget string) {
 		log.Fatal(err)
 	}
 
-	for _, copyPath := range []string{
-		filepath.Join("..", "sing-box-for-android", "app", "libs"),
-		filepath.Join("..", "android_client", "vendor-aars"),
-	} {
-		if !rw.IsDir(copyPath) {
-			continue
-		}
-		absPath, _ := filepath.Abs(copyPath)
-		err = rw.CopyFile(config.OutputName, filepath.Join(absPath, config.OutputName))
+	copyPath := filepath.Join("..", "sing-box-for-android", "app", "libs")
+	if rw.IsDir(copyPath) {
+		copyPath, _ = filepath.Abs(copyPath)
+		err = rw.CopyFile(config.OutputName, filepath.Join(copyPath, config.OutputName))
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Info("copied ", config.OutputName, " to ", absPath)
+		log.Info("copied ", config.OutputName, " to ", copyPath)
 	}
 }
 
@@ -171,14 +163,14 @@ func buildAndroid() {
 
 	bindTarget := getAndroidBindTarget()
 
-	// Build main variant (SDK 23)
+	// Build main variant (SDK 24)
 	mainTags := append([]string{}, sharedTags...)
 	// mainTags = append(mainTags, memcTags...)
 	if debugEnabled {
 		mainTags = append(mainTags, debugTags...)
 	}
 	buildAndroidVariant(AndroidBuildConfig{
-		AndroidAPI: 23,
+		AndroidAPI: 24,
 		OutputName: "libbox.aar",
 		Tags:       mainTags,
 	}, bindTarget)

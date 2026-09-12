@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/common/networkquality"
@@ -32,9 +31,12 @@ var (
 	sLogMaxLines             int
 	sDebug                   bool
 	sCrashReportSource       string
+	sAppVersion              string
+	sAppMarketingVersion     string
 	sOOMKillerEnabled        bool
 	sOOMKillerDisabled       bool
 	sOOMMemoryLimit          int64
+	sPowerReportEnabled      bool
 )
 
 func init() {
@@ -52,9 +54,12 @@ type SetupOptions struct {
 	LogMaxLines             int
 	Debug                   bool
 	CrashReportSource       string
+	AppVersion              string
+	AppMarketingVersion     string
 	OomKillerEnabled        bool
 	OomKillerDisabled       bool
 	OomMemoryLimit          int64
+	PowerReportEnabled      bool
 }
 
 func applySetupOptions(options *SetupOptions) {
@@ -74,6 +79,8 @@ func applySetupOptions(options *SetupOptions) {
 	sLogMaxLines = options.LogMaxLines
 	sDebug = options.Debug
 	sCrashReportSource = options.CrashReportSource
+	sAppVersion = options.AppVersion
+	sAppMarketingVersion = options.AppMarketingVersion
 	ReloadSetupOptions(options)
 }
 
@@ -81,12 +88,13 @@ func ReloadSetupOptions(options *SetupOptions) {
 	sOOMKillerEnabled = options.OomKillerEnabled
 	sOOMKillerDisabled = options.OomKillerDisabled
 	sOOMMemoryLimit = options.OomMemoryLimit
+	sPowerReportEnabled = options.PowerReportEnabled
 	if sOOMKillerEnabled {
 		if sOOMMemoryLimit == 0 && C.IsIos {
 			sOOMMemoryLimit = oomkiller.DefaultAppleNetworkExtensionMemoryLimit
 		}
 		if sOOMMemoryLimit > 0 {
-			debug.SetMemoryLimit(sOOMMemoryLimit * 3 / 4)
+			debug.SetMemoryLimit(sOOMMemoryLimit * 4 / 5)
 		} else {
 			debug.SetMemoryLimit(math.MaxInt64)
 		}
@@ -102,12 +110,9 @@ func Setup(options *SetupOptions) error {
 	return redirectStderr(filepath.Join(sWorkingPath, "CrashReport-"+sCrashReportSource+".log"))
 }
 
-func SetLocale(localeId string) error {
-	if strings.Contains(localeId, "@") {
-		localeId = strings.Split(localeId, "@")[0]
-	}
-	if !locale.Set(localeId) {
-		return E.New("unsupported locale: ", localeId)
+func SetLocale(localeID string) error {
+	if !locale.Set(localeID) {
+		return E.New("unsupported locale: ", localeID)
 	}
 	return nil
 }

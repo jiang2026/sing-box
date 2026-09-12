@@ -7,6 +7,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -26,6 +27,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/filemanager"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -73,7 +75,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if options.Masquerade != nil && options.Masquerade.Type != "" {
 		switch options.Masquerade.Type {
 		case C.Hysterai2MasqueradeTypeFile:
-			masqueradeHandler = http.FileServer(http.Dir(options.Masquerade.FileOptions.Directory))
+			masqueradeDirectory := filemanager.BasePath(ctx, os.ExpandEnv(options.Masquerade.FileOptions.Directory))
+			_, err = filemanager.ReadDir(ctx, masqueradeDirectory)
+			if err != nil && !os.IsNotExist(err) {
+				return nil, E.Cause(err, "read masquerade directory")
+			}
+			masqueradeHandler = http.FileServer(http.Dir(masqueradeDirectory))
 		case C.Hysterai2MasqueradeTypeProxy:
 			masqueradeURL, err := url.Parse(options.Masquerade.ProxyOptions.URL)
 			if err != nil {
@@ -125,6 +132,15 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	var realmOptions *realm.Options
 	if options.Realm != nil {
+		if options.Realm.IPVersion != 0 && options.ListenOptions.Listen != nil {
+			listenAddr := netip.Addr(*options.ListenOptions.Listen).Unmap()
+			if options.Realm.IPVersion == 6 && listenAddr.Is4() {
+				return nil, E.New("realm.ip_version 6 conflicts with listen address ", listenAddr)
+			}
+			if options.Realm.IPVersion == 4 && listenAddr.Is6() && !listenAddr.IsUnspecified() {
+				return nil, E.New("realm.ip_version 4 conflicts with listen address ", listenAddr)
+			}
+		}
 		queryOptions, err := adapter.DNSQueryOptionsFrom(ctx, options.Realm.STUNDomainResolver)
 		if err != nil {
 			return nil, err
@@ -150,7 +166,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 				}
 				return dnsRouter.Lookup(ctx, host, dnsOptions)
 			},
-			Logger: logger,
+			Logger:    logger,
+			IPVersion: options.Realm.IPVersion,
+		}
+		if options.Realm.PortMapping != nil && options.Realm.PortMapping.Enabled {
+			realmOptions.PortMapping = &realm.PortMappingOptions{
+				Timeout:  time.Duration(options.Realm.PortMapping.Timeout),
+				Lifetime: time.Duration(options.Realm.PortMapping.Lifetime),
+			}
 		}
 	}
 	hysteriaService, err := hysteria2.NewService[int](hysteria2.ServiceOptions{
@@ -258,7 +281,7 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 	return h.service.Start(packetConn)
 }
 
-func (h *Inbound) InterfaceUpdated() {
+func (h *Inbound) InterfaceUpdated(ctx context.Context) {
 	h.service.Reset()
 }
 

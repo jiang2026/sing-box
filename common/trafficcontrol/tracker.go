@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	N "github.com/sagernet/sing/common/network"
@@ -36,15 +37,9 @@ func (m *Manager) RoutedConnection(ctx context.Context, conn net.Conn, metadata 
 	upload := new(atomic.Int64)
 	download := new(atomic.Int64)
 	tracker := &connTracker{
-		ExtendedConn: bufio.NewCounterConn(conn, []N.CountFunc{func(n int64) {
-			upload.Add(n)
-			m.uploadTotal.Add(n)
-		}}, []N.CountFunc{func(n int64) {
-			download.Add(n)
-			m.downloadTotal.Add(n)
-		}}),
-		metadata: m.newTrackerMetadata(metadata, matchedRule, matchOutbound, upload, download),
-		manager:  m,
+		ExtendedConn: bufio.NewInt64CounterConn(conn, []*atomic.Int64{upload}, []*atomic.Int64{download}),
+		metadata:     m.newTrackerMetadata(metadata, matchedRule, matchOutbound, upload, download),
+		manager:      m,
 	}
 	m.join(tracker)
 	return tracker
@@ -54,18 +49,19 @@ func (m *Manager) RoutedPacketConnection(ctx context.Context, conn N.PacketConn,
 	upload := new(atomic.Int64)
 	download := new(atomic.Int64)
 	tracker := &packetConnTracker{
-		PacketConn: bufio.NewCounterPacketConn(conn, []N.CountFunc{func(n int64) {
-			upload.Add(n)
-			m.uploadTotal.Add(n)
-		}}, []N.CountFunc{func(n int64) {
-			download.Add(n)
-			m.downloadTotal.Add(n)
-		}}),
-		metadata: m.newTrackerMetadata(metadata, matchedRule, matchOutbound, upload, download),
-		manager:  m,
+		PacketConn: bufio.NewInt64CounterPacketConn(conn, []*atomic.Int64{upload}, nil, []*atomic.Int64{download}, nil),
+		metadata:   m.newTrackerMetadata(metadata, matchedRule, matchOutbound, upload, download),
+		manager:    m,
 	}
 	m.join(tracker)
 	return tracker
+}
+
+func (m *Manager) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) tun.FlowTracker {
+	return &flowTracker{
+		metadata: m.newTrackerMetadata(metadata, matchedRule, matchOutbound, new(atomic.Int64), new(atomic.Int64)),
+		manager:  m,
+	}
 }
 
 func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound, upload *atomic.Int64, download *atomic.Int64) TrackerMetadata {
@@ -133,6 +129,51 @@ func (t *connTracker) ReaderReplaceable() bool {
 
 func (t *connTracker) WriterReplaceable() bool {
 	return true
+}
+
+var (
+	_ Tracker         = (*flowTracker)(nil)
+	_ tun.FlowTracker = (*flowTracker)(nil)
+)
+
+type flowTracker struct {
+	metadata TrackerMetadata
+	manager  *Manager
+	handle   tun.FlowHandle
+}
+
+func (t *flowTracker) Metadata() *TrackerMetadata {
+	return &t.metadata
+}
+
+func (t *flowTracker) AttachFlow(handle tun.FlowHandle) {
+	t.handle = handle
+	t.manager.join(t)
+}
+
+func (t *flowTracker) CountForward(n int) {
+	t.metadata.Upload.Add(int64(n))
+}
+
+func (t *flowTracker) CountReverse(n int) {
+	t.metadata.Download.Add(int64(n))
+}
+
+func (t *flowTracker) FlowEstablished() {
+}
+
+func (t *flowTracker) CloseFlow(reason tun.FlowCloseReason) {
+	t.manager.leave(t)
+}
+
+func (t *flowTracker) Close() error {
+	handle := t.handle
+	if handle != nil {
+		handle.CloseFlow()
+	} else {
+		t.manager.leave(t)
+	}
+	return nil
 }
 
 type packetConnTracker struct {
