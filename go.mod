@@ -1,6 +1,6 @@
 module github.com/sagernet/sing-box
 
-go 1.24.7
+go 1.25
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
@@ -178,6 +178,6 @@ require (
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
 
-replace github.com/sagernet/wireguard-go => ../wireguard-go
+replace github.com/sagernet/wireguard-go => github.com/jiang2026/wireguard-go v0.0.3-bind
 
-replace github.com/sagernet/sing => ./_patches/sing
+replace github.com/sagernet/sing => github.com/jiang2026/sing v0.8.12-bind
