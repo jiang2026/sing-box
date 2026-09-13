@@ -1,13 +1,12 @@
-# Local patches
+# Local patches (archived)
 
-## sing (`./sing`)
+`sing` has moved to a standalone fork:
+https://github.com/jiang2026/sing
 
-Based on `github.com/sagernet/sing@v0.9.0-beta.4`.
+Consumers and this module use GitHub tags via `replace`:
 
-Patch: SOCKS5 UDP ASSOCIATE — when the server advertises `0.0.0.0` / `::` / loopback
-as the UDP relay (`BND.ADDR`), rewrite to the TCP peer IP + advertised port.
-Without this, Android/client UDP through SOCKS (proxy UDP probe) fails when the
-server listens on `0.0.0.0`.
+- Android / rc.5: `github.com/jiang2026/sing v0.9.0-beta.4-bind`
+- proxy_server / alpha.36: `github.com/jiang2026/sing v0.8.12-bind`
 
-Wired via `go.mod`:
-`replace github.com/sagernet/sing => ./_patches/sing`
+Do not use `./_patches/sing` path replaces anymore. The tree under
+`_patches/sing` may remain for historical reference only.
